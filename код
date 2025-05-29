@@ -7,79 +7,105 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes,
     CallbackQueryHandler,
-    filters)
+    filters
+)
 import pandas as pd
 import uuid
 from threading import Lock
 import os
+
+# Настройка логирования для отслеживания работы бота
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
 logger = logging.getLogger(__name__)
+
+# Определение состояний для ConversationHandler
 ROLE, TEACHER_NAME, TEACHER_SCHEDULE, STUDENT_NAME, STUDENT_TEACHER, STUDENT_TIME, DEL_REQ = range(7)
+
+# Имена файлов Excel для хранения данных
 TEACHERS_FILE = 'teachers.xlsx'
 STUDENTS_FILE = 'students.xlsx'
 APPOINTMENTS_FILE = 'appointments.xlsx'
-file_lock = Lock()  
+file_lock = Lock()  # Блокировка для предотвращения конфликтов при записи в файлы
+
+# Инициализация Excel-файлов, если они не существуют
 def init_excel():
     for file in [TEACHERS_FILE, STUDENTS_FILE, APPOINTMENTS_FILE]:
         if not os.path.exists(file):
             if file == TEACHERS_FILE:
+                # Создание пустого DataFrame для учителей с колонками user_id, name, username, schedule
                 df = pd.DataFrame(columns=['user_id', 'name', 'username', 'schedule'])
             elif file == STUDENTS_FILE:
+                # Создание пустого DataFrame для учеников с колонками user_id, name
                 df = pd.DataFrame(columns=['user_id', 'name'])
             elif file == APPOINTMENTS_FILE:
+                # Создание пустого DataFrame для записей с колонками id, student_id, teacher_id, time, created_at
                 df = pd.DataFrame(columns=['id', 'student_id', 'teacher_id', 'time', 'created_at'])
-            df.to_excel(file, index=False)
-init_excel()
+            df.to_excel(file, index=False)  # Сохранение пустого файла Excel
+
+init_excel()  # Вызов инициализации при запуске
+
+# Начало диалога: запрос роли пользователя (учитель или ученик)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    reply_keyboard = [['Учитель', 'Ученик']] 
+    reply_keyboard = [['Учитель', 'Ученик']]  # Клавиатура с выбором роли
     await update.message.reply_text(
         'Привет! Вы ученик или учитель?',
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
-    return ROLE 
+    return ROLE  # Переход к состоянию выбора роли
+
+# Обработка выбора роли
 async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_choice = update.message.text
-    context.user_data['role'] = user_choice  
-    remove_keyboard = ReplyKeyboardRemove() 
+    user_choice = update.message.text  # Получение выбранной роли
+    context.user_data['role'] = user_choice  # Сохранение роли в user_data
+    remove_keyboard = ReplyKeyboardRemove()  # Удаление клавиатуры после выбора
+
     if user_choice == 'Учитель':
         await update.message.reply_text(
-            'Введите ваше имя и отчество:',
+            'Введите ваше имя и отчество :',
             reply_markup=remove_keyboard
         )
-        return TEACHER_NAME 
+        return TEACHER_NAME  # Переход к вводу имени учителя
     elif user_choice == 'Ученик':
         await update.message.reply_text(
             'Введите ваше имя и фамилию:',
             reply_markup=remove_keyboard
         )
-        return STUDENT_NAME 
+        return STUDENT_NAME  # Переход к вводу имени ученика
     else:
         await update.message.reply_text(
             'Пожалуйста, выберите Учитель или Ученик.',
             reply_markup=remove_keyboard
         )
-        return ROLE
+        return ROLE  # Возврат к выбору роли при некорректном вводе
+
+# Обработка имени учителя
 async def teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['teacher_name'] = update.message.text
+    context.user_data['teacher_name'] = update.message.text  # Сохранение имени учителя
     await update.message.reply_text(
         'Введите ваше расписание на неделю (каждый день с новой строки, формат: "День: время1, время2").\n'
         'Пример:\nПонедельник: 10:00, 11:00\nВторник: 12:00'
     )
     return TEACHER_SCHEDULE  # Переход к вводу расписания
+
+# Сохранение расписания учителя
 async def teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id 
-    schedule = update.message.text  
-    teacher_name = context.user_data['teacher_name'] 
+    user_id = update.effective_user.id  # Получение ID пользователя
+    schedule = update.message.text  # Получение введенного расписания
+    teacher_name = context.user_data['teacher_name']  # Получение имени учителя из user_data
+
     try:
-        with file_lock:
-            df = pd.read_excel(TEACHERS_FILE) 
+        with file_lock:  # Блокировка для безопасной работы с файлом
+            df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
             teacher_exists = df['user_id'] == user_id
             if teacher_exists.any():
+                # Обновление данных существующего учителя
                 df.loc[teacher_exists, ['name', 'username', 'schedule']] = [
                     teacher_name, update.effective_user.username, schedule
                 ]
             else:
+                # Добавление нового учителя
                 new_row = pd.DataFrame({
                     'user_id': [user_id],
                     'name': [teacher_name],
@@ -89,56 +115,76 @@ async def teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 df = pd.concat([df, new_row], ignore_index=True)
             df.to_excel(TEACHERS_FILE, index=False)  # Сохранение изменений
     except Exception as e:
-        logger.error(f"Ошибка при сохранении расписания: {e}") 
+        logger.error(f"Ошибка при сохранении расписания: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка при сохранении расписания.')
-        return ConversationHandler.END
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
     await update.message.reply_text('Расписание сохранено!')
-    return ConversationHandler.END 
+    return ConversationHandler.END  # Завершение диалога
+
+# Обработка имени ученика
 async def student_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['student_name'] = update.message.text 
-    user_id = update.effective_user.id  
+    context.user_data['student_name'] = update.message.text  # Сохранение имени ученика
+    user_id = update.effective_user.id  # Получение ID пользователя
+
     try:
-        with file_lock: 
-            df = pd.read_excel(STUDENTS_FILE)
+        with file_lock:  # Блокировка для безопасной работы с файлом
+            df = pd.read_excel(STUDENTS_FILE)  # Чтение файла учеников
             if not ((df['user_id'] == user_id)).any():
+                # Добавление нового ученика, если он не существует
                 new_row = pd.DataFrame({'user_id': [user_id], 'name': [context.user_data['student_name']]})
                 df = pd.concat([df, new_row], ignore_index=True)
-                df.to_excel(STUDENTS_FILE, index=False) 
+                df.to_excel(STUDENTS_FILE, index=False)  # Сохранение изменений
     except Exception as e:
-        logger.error(f"Ошибка при сохранении имени ученика: {e}")
+        logger.error(f"Ошибка при сохранении имени ученика: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка при сохранении данных.')
-        return ConversationHandler.END 
-    await update.message.reply_text('К какому учителю вы хотите записаться? Укажите @username')
-    return STUDENT_TEACHER 
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
+    df = pd.read_excel('filename.xlsm', sheetname=0) # can also index sheet by name or fetch all sheets
+    namelist = df['name'].tolist()
+
+    await update.message.reply_text('К какому учителю вы хотите записаться? Укажите имя и отчество', namelist)
+    return STUDENT_TEACHER  # Переход к выбору учителя
+
+# Выбор учителя учеником
 async def student_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    username = update.message.text.strip('@') 
+    name = update.message.text
+
     try:
         df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
-        teachers = df[df['username'] == username]  # Поиск учителя по username
+        teachers = df[df['name'] == name]  # Поиск учителя по username
         if teachers.empty:
             await update.message.reply_text('Учитель не найден. Попробуйте еще раз.')
             return STUDENT_TEACHER  # Возврат к вводу username при отсутствии учителя
+
         teacher = teachers.iloc[0]  # Получение первого найденного учителя
         context.user_data['teacher_id'] = int(teacher['user_id'])  # Сохранение ID учителя
         context.user_data['teacher_name'] = teacher['name']  # Сохранение имени учителя
+
         if pd.isna(teacher['schedule']) or not teacher['schedule']:
             await update.message.reply_text('У этого учителя нет расписания.')
             return ConversationHandler.END  # Завершение диалога, если расписание пустое
+
         times = []  # Список доступных временных слотов
         for line in teacher['schedule'].split('\n'):
             day, time_slots = line.split(': ', 1)  # Разделение строки на день и времена
             for time in time_slots.split(', '):
                 times.append(f"{day}: {time}")  # Формирование списка "День: время"
+
         keyboard = [[InlineKeyboardButton(time, callback_data=time)] for time in times]  # Создание кнопок
         reply_markup = InlineKeyboardMarkup(keyboard)  # Формирование клавиатуры
+
         await update.message.reply_text(
             f'У {teacher["name"]} свободны:',
-            reply_markup=reply_markup)
+            reply_markup=reply_markup
+        )
         return STUDENT_TIME  # Переход к выбору времени
     except Exception as e:
         logger.error(f"Ошибка при выборе учителя: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
+# Запись ученика на выбранное время
 async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query  # Получение callback-запроса
     await query.answer()  # Подтверждение получения запроса
@@ -146,12 +192,14 @@ async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     student_id = update.effective_user.id  # Получение ID ученика
     teacher_id = context.user_data['teacher_id']  # Получение ID учителя
     teacher_name = context.user_data['teacher_name']  # Получение имени учителя
+
     try:
         with file_lock:  # Блокировка для безопасной работы с файлами
             df = pd.read_excel(APPOINTMENTS_FILE)  # Чтение файла записей
             if any((df['time'] == time) & (df['teacher_id'] == teacher_id)):
                 await query.edit_message_text('Это время уже занято!')
                 return ConversationHandler.END  # Завершение, если время занято
+
             new_id = str(uuid.uuid4())  # Генерация уникального ID для записи
             new_row = pd.DataFrame({
                 'id': [new_id],
@@ -162,6 +210,7 @@ async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             })
             df = pd.concat([df, new_row], ignore_index=True)  # Добавление новой записи
             df.to_excel(APPOINTMENTS_FILE, index=False)  # Сохранение изменений
+
             teachers_df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
             teacher_idx = teachers_df[teachers_df['user_id'] == teacher_id].index  # Поиск индекса учителя
             schedule = teachers_df.loc[teacher_idx, 'schedule'].iloc[0]  # Получение текущего расписания
@@ -173,21 +222,25 @@ async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                     updated_schedule.append(f"{day}: {', '.join(updated_times)}")  # Обновление расписания
             teachers_df.loc[teacher_idx, 'schedule'] = '\n'.join(updated_schedule)  # Сохранение нового расписания
             teachers_df.to_excel(TEACHERS_FILE, index=False)  # Сохранение изменений
+
             students_df = pd.read_excel(STUDENTS_FILE)  # Чтение файла учеников
             student_name = students_df[students_df['user_id'] == student_id]['name'].iloc[0]  # Получение имени ученика
             await context.bot.send_message(
                 chat_id=teacher_id,
                 text=f'К вам записан {student_name} на {time}.'  # Уведомление учителя
             )
+
         await query.edit_message_text(f'Вы успешно записаны на {time}!')
         return ConversationHandler.END  # Завершение диалога
     except Exception as e:
         logger.error(f"Ошибка при записи на время: {e}")  # Логирование ошибки
         await query.edit_message_text('Произошла ошибка при записи.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
 # Запрос на удаление записи
 async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id  # Получение ID пользователя
+
     try:
         appointments_df = pd.read_excel(APPOINTMENTS_FILE)  # Чтение файла записей
         teachers_df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
@@ -195,6 +248,7 @@ async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if user_appointments.empty:
             await update.message.reply_text('У вас нет активных записей.')
             return ConversationHandler.END  # Завершение, если записей нет
+
         keyboard = []
         for _, app in user_appointments.iterrows():
             teacher = teachers_df[teachers_df['user_id'] == app['teacher_id']]  # Поиск учителя
@@ -208,11 +262,13 @@ async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.error(f"Ошибка при удалении записи: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
 # Удаление выбранной записи
 async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query  # Получение callback-запроса
     await query.answer()  # Подтверждение получения запроса
     appointment_id = query.data  # Получение ID записи
+
     try:
         with file_lock:  # Блокировка для безопасной работы с файлами
             appointments_df = pd.read_excel(APPOINTMENTS_FILE)  # Чтение файла записей
@@ -220,17 +276,21 @@ async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if deleted_appointment.empty:
                 await query.edit_message_text('Запись не найдена!')
                 return ConversationHandler.END  # Завершение, если запись не найдена
+
             appointments_df = appointments_df[appointments_df['id'] != appointment_id]  # Удаление записи
             appointments_df.to_excel(APPOINTMENTS_FILE, index=False)  # Сохранение изменений
+
             teacher_id = deleted_appointment['teacher_id'].iloc[0]  # Получение ID учителя
             time = deleted_appointment['time'].iloc[0]  # Получение времени записи
             day, time_slot = time.split(': ', 1)  # Разделение времени на день и временной слот
+
             teachers_df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
             teacher_idx = teachers_df[teachers_df['user_id'] == teacher_id].index  # Поиск индекса учителя
             schedule = teachers_df.loc[teacher_idx, 'schedule'].iloc[0] or ''  # Получение текущего расписания
             schedule_lines = schedule.split('\n') if schedule else []  # Разделение расписания на строки
             updated_schedule = []
             day_updated = False
+
             for line in schedule_lines:
                 if line.startswith(f"{day}:"):
                     times = line.split(': ', 1)[1].split(', ')
@@ -240,21 +300,30 @@ async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     day_updated = True
                 else:
                     updated_schedule.append(line)
+
             if not day_updated:
                 updated_schedule.append(f"{day}: {time_slot}")  # Добавление нового дня, если его нет
+
             teachers_df.loc[teacher_idx, 'schedule'] = '\n'.join(updated_schedule)  # Обновление расписания
             teachers_df.to_excel(TEACHERS_FILE, index=False)  # Сохранение изменений
+
         await query.edit_message_text('Запись успешно удалена!')
         return ConversationHandler.END  # Завершение диалога
     except Exception as e:
         logger.error(f"Ошибка при удалении записи: {e}")  # Логирование ошибки
         await query.edit_message_text('Произошла ошибка при удалении.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
+# Отмена диалога
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text('Действие отменено.')
     return ConversationHandler.END  # Завершение диалога
+
+# Основная функция для запуска бота
 def main() -> None:
-    TOKEN = "___"  # Получение токена бота
+
+    TOKEN = "7558468469:AAF5ZWRgH4qZUivqj4S7P44E1c01h_b4A_g"  # Получение токена бота
+
     application = Application.builder().token(TOKEN).build()  # Инициализация приложения
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],  # Точка входа для команды /start
@@ -269,7 +338,359 @@ def main() -> None:
         },
         fallbacks=[CommandHandler('cancel', cancel)],  # Обработчик команды /cancel
     )
+
     application.add_handler(conv_handler)  # Добавление обработчика диалога
+    application.add_handler(CommandHandler('delreq', delreq))  # Добавление команды /delreq
+    application.run_polling()  # Запуск бота в режиме polling
+
+if __name__ == '__main__':
+    main()  # Запуск основной функцииimport logging
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    filters
+)
+import pandas as pd
+import uuid
+from threading import Lock
+import os
+
+# Настройка логирования для отслеживания работы бота
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Определение состояний для ConversationHandler
+ROLE, TEACHER_NAME, TEACHER_SCHEDULE, STUDENT_NAME, STUDENT_TEACHER, STUDENT_TIME, DEL_REQ = range(7)
+
+# Имена файлов Excel для хранения данных
+TEACHERS_FILE = 'teachers.xlsx'
+STUDENTS_FILE = 'students.xlsx'
+APPOINTMENTS_FILE = 'appointments.xlsx'
+file_lock = Lock()  # Блокировка для предотвращения конфликтов при записи в файлы
+
+# Инициализация Excel-файлов, если они не существуют
+def init_excel():
+    for file in [TEACHERS_FILE, STUDENTS_FILE, APPOINTMENTS_FILE]:
+        if not os.path.exists(file):
+            if file == TEACHERS_FILE:
+                # Создание пустого DataFrame для учителей с колонками user_id, name, username, schedule
+                df = pd.DataFrame(columns=['user_id', 'name', 'username', 'schedule'])
+            elif file == STUDENTS_FILE:
+                # Создание пустого DataFrame для учеников с колонками user_id, name
+                df = pd.DataFrame(columns=['user_id', 'name'])
+            elif file == APPOINTMENTS_FILE:
+                # Создание пустого DataFrame для записей с колонками id, student_id, teacher_id, time, created_at
+                df = pd.DataFrame(columns=['id', 'student_id', 'teacher_id', 'time', 'created_at'])
+            df.to_excel(file, index=False)  # Сохранение пустого файла Excel
+
+init_excel()  # Вызов инициализации при запуске
+
+# Начало диалога: запрос роли пользователя (учитель или ученик)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    reply_keyboard = [['Учитель', 'Ученик']]  # Клавиатура с выбором роли
+    await update.message.reply_text(
+        'Привет! Вы ученик или учитель?',
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
+    )
+    return ROLE  # Переход к состоянию выбора роли
+
+# Обработка выбора роли
+async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_choice = update.message.text  # Получение выбранной роли
+    context.user_data['role'] = user_choice  # Сохранение роли в user_data
+    remove_keyboard = ReplyKeyboardRemove()  # Удаление клавиатуры после выбора
+
+    if user_choice == 'Учитель':
+        await update.message.reply_text(
+            'Введите ваше имя и отчество :',
+            reply_markup=remove_keyboard
+        )
+        return TEACHER_NAME  # Переход к вводу имени учителя
+    elif user_choice == 'Ученик':
+        await update.message.reply_text(
+            'Введите ваше имя и фамилию:',
+            reply_markup=remove_keyboard
+        )
+        return STUDENT_NAME  # Переход к вводу имени ученика
+    else:
+        await update.message.reply_text(
+            'Пожалуйста, выберите Учитель или Ученик.',
+            reply_markup=remove_keyboard
+        )
+        return ROLE  # Возврат к выбору роли при некорректном вводе
+
+# Обработка имени учителя
+async def teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['teacher_name'] = update.message.text  # Сохранение имени учителя
+    await update.message.reply_text(
+        'Введите ваше расписание на неделю (каждый день с новой строки, формат: "День: время1, время2").\n'
+        'Пример:\nПонедельник: 10:00, 11:00\nВторник: 12:00'
+    )
+    return TEACHER_SCHEDULE  # Переход к вводу расписания
+
+# Сохранение расписания учителя
+async def teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id  # Получение ID пользователя
+    schedule = update.message.text  # Получение введенного расписания
+    teacher_name = context.user_data['teacher_name']  # Получение имени учителя из user_data
+
+    try:
+        with file_lock:  # Блокировка для безопасной работы с файлом
+            df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
+            teacher_exists = df['user_id'] == user_id
+            if teacher_exists.any():
+                # Обновление данных существующего учителя
+                df.loc[teacher_exists, ['name', 'username', 'schedule']] = [
+                    teacher_name, update.effective_user.username, schedule
+                ]
+            else:
+                # Добавление нового учителя
+                new_row = pd.DataFrame({
+                    'user_id': [user_id],
+                    'name': [teacher_name],
+                    'username': [update.effective_user.username],
+                    'schedule': [schedule]
+                })
+                df = pd.concat([df, new_row], ignore_index=True)
+            df.to_excel(TEACHERS_FILE, index=False)  # Сохранение изменений
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении расписания: {e}")  # Логирование ошибки
+        await update.message.reply_text('Произошла ошибка при сохранении расписания.')
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
+    await update.message.reply_text('Расписание сохранено!')
+    return ConversationHandler.END  # Завершение диалога
+
+# Обработка имени ученика
+async def student_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data['student_name'] = update.message.text  # Сохранение имени ученика
+    user_id = update.effective_user.id  # Получение ID пользователя
+
+    try:
+        with file_lock:  # Блокировка для безопасной работы с файлом
+            df = pd.read_excel(STUDENTS_FILE)  # Чтение файла учеников
+            if not ((df['user_id'] == user_id)).any():
+                # Добавление нового ученика, если он не существует
+                new_row = pd.DataFrame({'user_id': [user_id], 'name': [context.user_data['student_name']]})
+                df = pd.concat([df, new_row], ignore_index=True)
+                df.to_excel(STUDENTS_FILE, index=False)  # Сохранение изменений
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении имени ученика: {e}")  # Логирование ошибки
+        await update.message.reply_text('Произошла ошибка при сохранении данных.')
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
+    df = pd.read_excel('filename.xlsm', sheetname=0) # can also index sheet by name or fetch all sheets
+    namelist = df['name'].tolist()
+
+    await update.message.reply_text('К какому учителю вы хотите записаться? Укажите имя и отчество', namelist)
+    return STUDENT_TEACHER  # Переход к выбору учителя
+
+# Выбор учителя учеником
+async def student_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    name = update.message.text
+
+    try:
+        df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
+        teachers = df[df['name'] == name]  # Поиск учителя по username
+        if teachers.empty:
+            await update.message.reply_text('Учитель не найден. Попробуйте еще раз.')
+            return STUDENT_TEACHER  # Возврат к вводу username при отсутствии учителя
+
+        teacher = teachers.iloc[0]  # Получение первого найденного учителя
+        context.user_data['teacher_id'] = int(teacher['user_id'])  # Сохранение ID учителя
+        context.user_data['teacher_name'] = teacher['name']  # Сохранение имени учителя
+
+        if pd.isna(teacher['schedule']) or not teacher['schedule']:
+            await update.message.reply_text('У этого учителя нет расписания.')
+            return ConversationHandler.END  # Завершение диалога, если расписание пустое
+
+        times = []  # Список доступных временных слотов
+        for line in teacher['schedule'].split('\n'):
+            day, time_slots = line.split(': ', 1)  # Разделение строки на день и времена
+            for time in time_slots.split(', '):
+                times.append(f"{day}: {time}")  # Формирование списка "День: время"
+
+        keyboard = [[InlineKeyboardButton(time, callback_data=time)] for time in times]  # Создание кнопок
+        reply_markup = InlineKeyboardMarkup(keyboard)  # Формирование клавиатуры
+
+        await update.message.reply_text(
+            f'У {teacher["name"]} свободны:',
+            reply_markup=reply_markup
+        )
+        return STUDENT_TIME  # Переход к выбору времени
+    except Exception as e:
+        logger.error(f"Ошибка при выборе учителя: {e}")  # Логирование ошибки
+        await update.message.reply_text('Произошла ошибка.')
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
+# Запись ученика на выбранное время
+async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query  # Получение callback-запроса
+    await query.answer()  # Подтверждение получения запроса
+    time = query.data  # Получение выбранного времени
+    student_id = update.effective_user.id  # Получение ID ученика
+    teacher_id = context.user_data['teacher_id']  # Получение ID учителя
+    teacher_name = context.user_data['teacher_name']  # Получение имени учителя
+
+    try:
+        with file_lock:  # Блокировка для безопасной работы с файлами
+            df = pd.read_excel(APPOINTMENTS_FILE)  # Чтение файла записей
+            if any((df['time'] == time) & (df['teacher_id'] == teacher_id)):
+                await query.edit_message_text('Это время уже занято!')
+                return ConversationHandler.END  # Завершение, если время занято
+
+            new_id = str(uuid.uuid4())  # Генерация уникального ID для записи
+            new_row = pd.DataFrame({
+                'id': [new_id],
+                'student_id': [student_id],
+                'teacher_id': [teacher_id],
+                'time': [time],
+                'created_at': [pd.Timestamp.now().isoformat()]
+            })
+            df = pd.concat([df, new_row], ignore_index=True)  # Добавление новой записи
+            df.to_excel(APPOINTMENTS_FILE, index=False)  # Сохранение изменений
+
+            teachers_df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
+            teacher_idx = teachers_df[teachers_df['user_id'] == teacher_id].index  # Поиск индекса учителя
+            schedule = teachers_df.loc[teacher_idx, 'schedule'].iloc[0]  # Получение текущего расписания
+            updated_schedule = []
+            for line in schedule.split('\n'):
+                day, times = line.split(': ', 1)  # Разделение строки на день и времена
+                updated_times = [t for t in times.split(', ') if f"{day}: {t}" != time]  # Удаление занятого времени
+                if updated_times:
+                    updated_schedule.append(f"{day}: {', '.join(updated_times)}")  # Обновление расписания
+            teachers_df.loc[teacher_idx, 'schedule'] = '\n'.join(updated_schedule)  # Сохранение нового расписания
+            teachers_df.to_excel(TEACHERS_FILE, index=False)  # Сохранение изменений
+
+            students_df = pd.read_excel(STUDENTS_FILE)  # Чтение файла учеников
+            student_name = students_df[students_df['user_id'] == student_id]['name'].iloc[0]  # Получение имени ученика
+            await context.bot.send_message(
+                chat_id=teacher_id,
+                text=f'К вам записан {student_name} на {time}.'  # Уведомление учителя
+            )
+
+        await query.edit_message_text(f'Вы успешно записаны на {time}!')
+        return ConversationHandler.END  # Завершение диалога
+    except Exception as e:
+        logger.error(f"Ошибка при записи на время: {e}")  # Логирование ошибки
+        await query.edit_message_text('Произошла ошибка при записи.')
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
+# Запрос на удаление записи
+async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id  # Получение ID пользователя
+
+    try:
+        appointments_df = pd.read_excel(APPOINTMENTS_FILE)  # Чтение файла записей
+        teachers_df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
+        user_appointments = appointments_df[appointments_df['student_id'] == user_id]  # Поиск записей пользователя
+        if user_appointments.empty:
+            await update.message.reply_text('У вас нет активных записей.')
+            return ConversationHandler.END  # Завершение, если записей нет
+
+        keyboard = []
+        for _, app in user_appointments.iterrows():
+            teacher = teachers_df[teachers_df['user_id'] == app['teacher_id']]  # Поиск учителя
+            if not teacher.empty:
+                teacher_name = teacher['name'].iloc[0]
+                keyboard.append([InlineKeyboardButton(f'{teacher_name} - {app["time"]}', callback_data=app['id'])])
+        reply_markup = InlineKeyboardMarkup(keyboard)  # Создание клавиатуры с записями
+        await update.message.reply_text('Выберите запись для удаления:', reply_markup=reply_markup)
+        return DEL_REQ  # Переход к удалению записи
+    except Exception as e:
+        logger.error(f"Ошибка при удалении записи: {e}")  # Логирование ошибки
+        await update.message.reply_text('Произошла ошибка.')
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
+# Удаление выбранной записи
+async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query  # Получение callback-запроса
+    await query.answer()  # Подтверждение получения запроса
+    appointment_id = query.data  # Получение ID записи
+
+    try:
+        with file_lock:  # Блокировка для безопасной работы с файлами
+            appointments_df = pd.read_excel(APPOINTMENTS_FILE)  # Чтение файла записей
+            deleted_appointment = appointments_df[appointments_df['id'] == appointment_id]  # Поиск удаляемой записи
+            if deleted_appointment.empty:
+                await query.edit_message_text('Запись не найдена!')
+                return ConversationHandler.END  # Завершение, если запись не найдена
+
+            appointments_df = appointments_df[appointments_df['id'] != appointment_id]  # Удаление записи
+            appointments_df.to_excel(APPOINTMENTS_FILE, index=False)  # Сохранение изменений
+
+            teacher_id = deleted_appointment['teacher_id'].iloc[0]  # Получение ID учителя
+            time = deleted_appointment['time'].iloc[0]  # Получение времени записи
+            day, time_slot = time.split(': ', 1)  # Разделение времени на день и временной слот
+
+            teachers_df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
+            teacher_idx = teachers_df[teachers_df['user_id'] == teacher_id].index  # Поиск индекса учителя
+            schedule = teachers_df.loc[teacher_idx, 'schedule'].iloc[0] or ''  # Получение текущего расписания
+            schedule_lines = schedule.split('\n') if schedule else []  # Разделение расписания на строки
+            updated_schedule = []
+            day_updated = False
+
+            for line in schedule_lines:
+                if line.startswith(f"{day}:"):
+                    times = line.split(': ', 1)[1].split(', ')
+                    times.append(time_slot)  # Добавление времени обратно
+                    times.sort()  # Сортировка времени
+                    updated_schedule.append(f"{day}: {', '.join(times)}")
+                    day_updated = True
+                else:
+                    updated_schedule.append(line)
+
+            if not day_updated:
+                updated_schedule.append(f"{day}: {time_slot}")  # Добавление нового дня, если его нет
+
+            teachers_df.loc[teacher_idx, 'schedule'] = '\n'.join(updated_schedule)  # Обновление расписания
+            teachers_df.to_excel(TEACHERS_FILE, index=False)  # Сохранение изменений
+
+        await query.edit_message_text('Запись успешно удалена!')
+        return ConversationHandler.END  # Завершение диалога
+    except Exception as e:
+        logger.error(f"Ошибка при удалении записи: {e}")  # Логирование ошибки
+        await query.edit_message_text('Произошла ошибка при удалении.')
+        return ConversationHandler.END  # Завершение диалога при ошибке
+
+# Отмена диалога
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text('Действие отменено.')
+    return ConversationHandler.END  # Завершение диалога
+
+# Основная функция для запуска бота
+def main() -> None:
+
+    TOKEN = "___"  # Получение токена бота
+
+    application = Application.builder().token(TOKEN).build()  # Инициализация приложения
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],  # Точка входа для команды /start
+        states={
+            ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, role)],
+            TEACHER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_name)],
+            TEACHER_SCHEDULE: [MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_schedule)],
+            STUDENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, student_name)],
+            STUDENT_TEACHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, student_teacher)],
+            STUDENT_TIME: [CallbackQueryHandler(student_time)],
+            DEL_REQ: [CallbackQueryHandler(delete_appointment)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],  # Обработчик команды /cancel
+    )
+
+    application.add_handler(conv_handler)  # Добавление обработчика диалога
+    application.add_handler(CommandHandler('delreq', delreq))  # Добавление команды /delreq
+    application.run_polling()  # Запуск бота в режиме polling
+
+if __name__ == '__main__':
+    main()  # Запуск основной функции
     application.add_handler(CommandHandler('delreq', delreq))  # Добавление команды /delreq
     application.run_polling()  # Запуск бота в режиме polling
 if __name__ == '__main__':

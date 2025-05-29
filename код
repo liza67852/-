@@ -29,6 +29,7 @@ STUDENTS_FILE = 'students.xlsx'
 APPOINTMENTS_FILE = 'appointments.xlsx'
 file_lock = Lock()  # Блокировка для предотвращения конфликтов при записи в файлы
 
+
 # Инициализация Excel-файлов, если они не существуют
 def init_excel():
     for file in [TEACHERS_FILE, STUDENTS_FILE, APPOINTMENTS_FILE]:
@@ -44,7 +45,9 @@ def init_excel():
                 df = pd.DataFrame(columns=['id', 'student_id', 'teacher_id', 'time', 'created_at'])
             df.to_excel(file, index=False)  # Сохранение пустого файла Excel
 
+
 init_excel()  # Вызов инициализации при запуске
+
 
 # Начало диалога: запрос роли пользователя (учитель или ученик)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -54,6 +57,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
     return ROLE  # Переход к состоянию выбора роли
+
 
 # Обработка выбора роли
 async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -80,6 +84,7 @@ async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ROLE  # Возврат к выбору роли при некорректном вводе
 
+
 # Обработка имени учителя
 async def teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['teacher_name'] = update.message.text  # Сохранение имени учителя
@@ -88,6 +93,7 @@ async def teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         'Пример:\nПонедельник: 10:00, 11:00\nВторник: 12:00'
     )
     return TEACHER_SCHEDULE  # Переход к вводу расписания
+
 
 # Сохранение расписания учителя
 async def teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -122,6 +128,7 @@ async def teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text('Расписание сохранено!')
     return ConversationHandler.END  # Завершение диалога
 
+
 # Обработка имени ученика
 async def student_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['student_name'] = update.message.text  # Сохранение имени ученика
@@ -140,11 +147,16 @@ async def student_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await update.message.reply_text('Произошла ошибка при сохранении данных.')
         return ConversationHandler.END  # Завершение диалога при ошибке
 
-    df = pd.read_excel('filename.xlsm', sheetname=0) # can also index sheet by name or fetch all sheets
-    namelist = df['name'].tolist()
+    df = pd.read_excel(TEACHERS_FILE)
+    namelist = df["name"].values.tolist()
+    message = "Список учителей:\n"
+    for item in namelist:
+        message += f"- {item}\n"
+    await update.message.reply_text(message)
 
-    await update.message.reply_text('К какому учителю вы хотите записаться? Укажите имя и отчество', namelist)
+    await update.message.reply_text('К какому учителю вы хотите записаться? Укажите имя и отчество')
     return STUDENT_TEACHER  # Переход к выбору учителя
+
 
 # Выбор учителя учеником
 async def student_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -152,10 +164,10 @@ async def student_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     try:
         df = pd.read_excel(TEACHERS_FILE)  # Чтение файла учителей
-        teachers = df[df['name'] == name]  # Поиск учителя по username
+        teachers = df[df['name'] == name]  # Поиск учителя по name
         if teachers.empty:
             await update.message.reply_text('Учитель не найден. Попробуйте еще раз.')
-            return STUDENT_TEACHER  # Возврат к вводу username при отсутствии учителя
+            return STUDENT_TEACHER  # Возврат к вводу name при отсутствии учителя
 
         teacher = teachers.iloc[0]  # Получение первого найденного учителя
         context.user_data['teacher_id'] = int(teacher['user_id'])  # Сохранение ID учителя
@@ -183,6 +195,7 @@ async def student_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.error(f"Ошибка при выборе учителя: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
 
 # Запись ученика на выбранное время
 async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -237,6 +250,7 @@ async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await query.edit_message_text('Произошла ошибка при записи.')
         return ConversationHandler.END  # Завершение диалога при ошибке
 
+
 # Запрос на удаление записи
 async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id  # Получение ID пользователя
@@ -262,6 +276,7 @@ async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.error(f"Ошибка при удалении записи: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
 
 # Удаление выбранной записи
 async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -314,15 +329,16 @@ async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text('Произошла ошибка при удалении.')
         return ConversationHandler.END  # Завершение диалога при ошибке
 
+
 # Отмена диалога
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text('Действие отменено.')
     return ConversationHandler.END  # Завершение диалога
 
+
 # Основная функция для запуска бота
 def main() -> None:
-
-    TOKEN = "7558468469:AAF5ZWRgH4qZUivqj4S7P44E1c01h_b4A_g"  # Получение токена бота
+    TOKEN = "вставить тут"  # Получение токена бота
 
     application = Application.builder().token(TOKEN).build()  # Инициализация приложения
     conv_handler = ConversationHandler(
@@ -342,6 +358,7 @@ def main() -> None:
     application.add_handler(conv_handler)  # Добавление обработчика диалога
     application.add_handler(CommandHandler('delreq', delreq))  # Добавление команды /delreq
     application.run_polling()  # Запуск бота в режиме polling
+
 
 if __name__ == '__main__':
     main()  # Запуск основной функцииimport logging
@@ -375,6 +392,7 @@ STUDENTS_FILE = 'students.xlsx'
 APPOINTMENTS_FILE = 'appointments.xlsx'
 file_lock = Lock()  # Блокировка для предотвращения конфликтов при записи в файлы
 
+
 # Инициализация Excel-файлов, если они не существуют
 def init_excel():
     for file in [TEACHERS_FILE, STUDENTS_FILE, APPOINTMENTS_FILE]:
@@ -390,7 +408,9 @@ def init_excel():
                 df = pd.DataFrame(columns=['id', 'student_id', 'teacher_id', 'time', 'created_at'])
             df.to_excel(file, index=False)  # Сохранение пустого файла Excel
 
+
 init_excel()  # Вызов инициализации при запуске
+
 
 # Начало диалога: запрос роли пользователя (учитель или ученик)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -400,6 +420,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True),
     )
     return ROLE  # Переход к состоянию выбора роли
+
 
 # Обработка выбора роли
 async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -426,6 +447,7 @@ async def role(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ROLE  # Возврат к выбору роли при некорректном вводе
 
+
 # Обработка имени учителя
 async def teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['teacher_name'] = update.message.text  # Сохранение имени учителя
@@ -434,6 +456,7 @@ async def teacher_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         'Пример:\nПонедельник: 10:00, 11:00\nВторник: 12:00'
     )
     return TEACHER_SCHEDULE  # Переход к вводу расписания
+
 
 # Сохранение расписания учителя
 async def teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -468,6 +491,7 @@ async def teacher_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text('Расписание сохранено!')
     return ConversationHandler.END  # Завершение диалога
 
+
 # Обработка имени ученика
 async def student_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['student_name'] = update.message.text  # Сохранение имени ученика
@@ -486,11 +510,12 @@ async def student_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await update.message.reply_text('Произошла ошибка при сохранении данных.')
         return ConversationHandler.END  # Завершение диалога при ошибке
 
-    df = pd.read_excel('filename.xlsm', sheetname=0) # can also index sheet by name or fetch all sheets
+    df = pd.read_excel('filename.xlsm')
     namelist = df['name'].tolist()
 
     await update.message.reply_text('К какому учителю вы хотите записаться? Укажите имя и отчество', namelist)
     return STUDENT_TEACHER  # Переход к выбору учителя
+
 
 # Выбор учителя учеником
 async def student_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -529,6 +554,7 @@ async def student_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.error(f"Ошибка при выборе учителя: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
 
 # Запись ученика на выбранное время
 async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -583,6 +609,7 @@ async def student_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await query.edit_message_text('Произошла ошибка при записи.')
         return ConversationHandler.END  # Завершение диалога при ошибке
 
+
 # Запрос на удаление записи
 async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id  # Получение ID пользователя
@@ -608,6 +635,7 @@ async def delreq(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         logger.error(f"Ошибка при удалении записи: {e}")  # Логирование ошибки
         await update.message.reply_text('Произошла ошибка.')
         return ConversationHandler.END  # Завершение диалога при ошибке
+
 
 # Удаление выбранной записи
 async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -660,14 +688,15 @@ async def delete_appointment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text('Произошла ошибка при удалении.')
         return ConversationHandler.END  # Завершение диалога при ошибке
 
+
 # Отмена диалога
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text('Действие отменено.')
     return ConversationHandler.END  # Завершение диалога
 
+
 # Основная функция для запуска бота
 def main() -> None:
-
     TOKEN = "___"  # Получение токена бота
 
     application = Application.builder().token(TOKEN).build()  # Инициализация приложения
@@ -688,6 +717,7 @@ def main() -> None:
     application.add_handler(conv_handler)  # Добавление обработчика диалога
     application.add_handler(CommandHandler('delreq', delreq))  # Добавление команды /delreq
     application.run_polling()  # Запуск бота в режиме polling
+
 
 if __name__ == '__main__':
     main()  # Запуск основной функции
